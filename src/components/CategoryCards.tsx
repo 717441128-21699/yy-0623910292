@@ -31,6 +31,10 @@ export default function CategoryCards({ stats }: Props) {
           const filters = getCurrentFilters()
           const params = new URLSearchParams()
           params.set('category', stat.category)
+          const allCategories = Array.from(new Set([...filters.selectedCategories, stat.category]))
+          if (allCategories.length > 0) {
+            params.set('categories', allCategories.join(','))
+          }
           if (filters.selectedStreets.length > 0) {
             params.set('streets', filters.selectedStreets.join(','))
           }

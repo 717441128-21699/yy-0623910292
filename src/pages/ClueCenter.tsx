@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useStore } from '@/store'
 import { CATEGORIES, CATEGORY_COLORS, SOURCE_LABELS, STREETS, type Category, type Source } from '@/types'
-import { FileSearch, ChevronDown, ChevronUp, Phone, MessageSquare, Globe, MapPin, Clock, Users, FileText, Copy, CheckCircle2, AlertTriangle, Building2, TrendingUp, Filter, AlertCircle, CheckCircle, User } from 'lucide-react'
+import { FileSearch, ChevronDown, ChevronUp, Phone, MessageSquare, Globe, MapPin, Clock, Users, FileText, Copy, CheckCircle2, AlertTriangle, Building2, TrendingUp, Filter, AlertCircle, CheckCircle, User, X, ChevronRight, Timer, ArrowRight } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { format } from 'date-fns'
@@ -34,6 +34,7 @@ export default function ClueCenter() {
   const categoryFilterParam = searchParams.get('category') || ''
   const streetFilterParam = searchParams.get('street') || ''
   const streetsParam = searchParams.get('streets') || ''
+  const categoriesParam = searchParams.get('categories') || ''
   const timeRangeParam = searchParams.get('timeRange') || ''
   const deptFilterParam = searchParams.get('dept') || ''
 
@@ -48,6 +49,7 @@ export default function ClueCenter() {
 
   useEffect(() => {
     const streetsFromUrl = streetsParam ? streetsParam.split(',').filter(Boolean) : []
+    const categoriesFromUrl = categoriesParam ? categoriesParam.split(',').filter((c): c is Category => CATEGORIES.includes(c as Category)) : []
     const timeFromUrl = (timeRangeParam === '7d' || timeRangeParam === '30d') ? timeRangeParam : null
 
     let hasChanges = false
@@ -55,6 +57,13 @@ export default function ClueCenter() {
       setSelectedStreets(streetsFromUrl)
       if (!streetsFromUrl.includes(filterStreet) && !filterStreet) {
         setFilterStreet(streetsFromUrl[0])
+      }
+      hasChanges = true
+    }
+    if (categoriesFromUrl.length > 0 && (selectedCategories.length !== categoriesFromUrl.length || categoriesFromUrl.some(c => !selectedCategories.includes(c)))) {
+      setSelectedCategories(categoriesFromUrl)
+      if (!filterCategory && categoriesFromUrl.length > 0) {
+        setFilterCategory(categoriesFromUrl[0])
       }
       hasChanges = true
     }
@@ -88,6 +97,50 @@ export default function ClueCenter() {
     })
   }, [filteredClueGroups, filterCategory, filterStreet, filterDept])
 
+  const activeFilterTags = useMemo(() => {
+    const tags: { key: string; label: string; type: 'street' | 'category' | 'timeRange' | 'dept'; value: string }[] = []
+    selectedStreets.forEach(s => {
+      tags.push({ key: `street-${s}`, label: s, type: 'street', value: s })
+    })
+    selectedCategories.forEach(c => {
+      tags.push({ key: `category-${c}`, label: c, type: 'category', value: c })
+    })
+    if (timeRange !== '7d') {
+      tags.push({ key: 'timeRange', label: timeRange === '30d' ? '近30天' : '自定义', type: 'timeRange', value: timeRange })
+    }
+    if (filterDept) {
+      tags.push({ key: `dept-${filterDept}`, label: filterDept, type: 'dept', value: filterDept })
+    }
+    return tags
+  }, [selectedStreets, selectedCategories, timeRange, filterDept])
+
+  const removeFilterTag = (type: 'street' | 'category' | 'timeRange' | 'dept', value: string) => {
+    if (type === 'street') {
+      setSelectedStreets(selectedStreets.filter(s => s !== value))
+      if (filterStreet === value) setFilterStreet('')
+      applyFilters()
+    } else if (type === 'category') {
+      setSelectedCategories(selectedCategories.filter(c => c !== value))
+      if (filterCategory === value) setFilterCategory('')
+      applyFilters()
+    } else if (type === 'timeRange') {
+      setTimeRange('7d')
+      applyFilters()
+    } else if (type === 'dept') {
+      setFilterDept('')
+    }
+  }
+
+  const clearAllFilters = () => {
+    setSelectedStreets([])
+    setSelectedCategories([])
+    setTimeRange('7d')
+    setFilterDept('')
+    setFilterCategory('')
+    setFilterStreet('')
+    applyFilters()
+  }
+
   const getClueComputedStatus = (cg: typeof filteredClueGroups[0]) => {
     if (!cg.isAssigned || !cg.assignment) return 'unassigned' as const
     const a = cg.assignment
@@ -116,7 +169,25 @@ export default function ClueCenter() {
       done: computedAssignments.filter(a => a.computedStatus === 'done').length,
     }
 
-    return { highFreqClues, departments, statusSummary }
+    const timelineDepts: Record<string, { clueGroupId: string; summary: string; createdAt: string; deadline: string; feedbackAt?: string; isDone: boolean }[]> = {}
+    for (const cg of filteredClueGroups) {
+      if (!cg.assignment) continue
+      const dept = cg.assignment.department
+      if (!timelineDepts[dept]) timelineDepts[dept] = []
+      timelineDepts[dept].push({
+        clueGroupId: cg.id,
+        summary: cg.summary,
+        createdAt: cg.assignment.createdAt,
+        deadline: cg.assignment.deadline,
+        feedbackAt: cg.assignment.feedbackAt,
+        isDone: cg.assignment.status === 'done' || !!cg.assignment.feedbackAt,
+      })
+    }
+    Object.values(timelineDepts).forEach(items => {
+      items.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    })
+
+    return { highFreqClues, departments, statusSummary, timelineDepts }
   }, [filteredClueGroups, computedAssignments])
 
   const generateBriefingText = (): string => {
@@ -162,7 +233,23 @@ export default function ClueCenter() {
       text += `\n`
     }
 
-    text += `五、分类统计（本周期/环比）\n`
+    const timelineEntries = Object.entries(briefingData.timelineDepts)
+    if (timelineEntries.length > 0) {
+      text += `五、督办闭环时间轴\n`
+      timelineEntries.forEach(([dept, items]) => {
+        text += `  【${dept}】\n`
+        items.forEach(item => {
+          text += `    · 派单：${item.createdAt} ${item.summary}\n`
+          text += `      截止：${item.deadline}\n`
+          if (item.feedbackAt) {
+            text += `      反馈：${item.feedbackAt}\n`
+          }
+        })
+      })
+      text += `\n`
+    }
+
+    text += `六、分类统计（本周期/环比）\n`
     categoryStats.forEach((s) => {
       const change = s.change >= 0 ? `+${s.change}` : `${s.change}`
       text += `  · ${s.category}：${s.count} 件（${change}%）\n`
@@ -214,6 +301,19 @@ export default function ClueCenter() {
     setViewMode('list')
   }
 
+  const toggleCategoryFilter = (cat: Category) => {
+    if (selectedCategories.includes(cat)) {
+      setSelectedCategories(selectedCategories.filter(c => c !== cat))
+    } else {
+      setSelectedCategories([...selectedCategories, cat])
+    }
+    setFilterCategory(filterCategory === cat ? '' : cat)
+    const p = new URLSearchParams(searchParams)
+    if (filterCategory === cat) p.delete('category'); else p.set('category', cat)
+    setSearchParams(p)
+    applyFilters()
+  }
+
   return (
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between">
@@ -257,9 +357,9 @@ export default function ClueCenter() {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-1 bg-gray-50 rounded-lg p-1">
           <button
-            onClick={() => { setFilterCategory(''); const p = new URLSearchParams(searchParams); p.delete('category'); setSearchParams(p) }}
+            onClick={() => { setFilterCategory(''); setSelectedCategories([]); const p = new URLSearchParams(searchParams); p.delete('category'); setSearchParams(p); applyFilters() }}
             className={`px-3 py-1.5 rounded-md text-sm transition-all ${
-              filterCategory === '' ? 'bg-white text-blue-600 shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
+              filterCategory === '' && selectedCategories.length === 0 ? 'bg-white text-blue-600 shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
             全部
@@ -267,16 +367,11 @@ export default function ClueCenter() {
           {CATEGORIES.map((cat) => (
             <button
               key={cat}
-              onClick={() => {
-                setFilterCategory(filterCategory === cat ? '' : cat)
-                const p = new URLSearchParams(searchParams)
-                if (filterCategory === cat) p.delete('category'); else p.set('category', cat)
-                setSearchParams(p)
-              }}
+              onClick={() => toggleCategoryFilter(cat)}
               className={`px-3 py-1.5 rounded-md text-sm transition-all ${
-                filterCategory === cat ? 'bg-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
+                selectedCategories.includes(cat) ? 'bg-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
               }`}
-              style={filterCategory === cat ? { color: CATEGORY_COLORS[cat] } : {}}
+              style={selectedCategories.includes(cat) ? { color: CATEGORY_COLORS[cat] } : {}}
             >
               {cat}
             </button>
@@ -321,6 +416,38 @@ export default function ClueCenter() {
           共 {filtered.length} 组线索
         </span>
       </div>
+
+      {activeFilterTags.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-100">
+          <span className="text-xs text-gray-500 flex items-center gap-1">
+            <Filter className="w-3 h-3" />
+            已筛选：
+          </span>
+          {activeFilterTags.map(tag => (
+            <span
+              key={tag.key}
+              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-white border border-gray-200 text-gray-700"
+            >
+              {tag.type === 'category' && (
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: CATEGORY_COLORS[tag.value as Category] || '#6B7280' }} />
+              )}
+              {tag.label}
+              <button
+                onClick={() => removeFilterTag(tag.type, tag.value)}
+                className="text-gray-400 hover:text-red-500 transition-colors"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+          <button
+            onClick={clearAllFilters}
+            className="text-xs text-red-500 hover:text-red-600 font-medium ml-auto flex items-center gap-1 transition-colors"
+          >
+            清除全部
+          </button>
+        </div>
+      )}
 
       <AnimatePresence mode="wait">
         {viewMode === 'list' ? (
@@ -689,6 +816,83 @@ export default function ClueCenter() {
                   ))}
                 </div>
               </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-100 p-5">
+              <h4 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2" style={{ fontFamily: "'Noto Serif SC', serif" }}>
+                <Timer className="w-4 h-4 text-blue-500" />
+                督办闭环时间轴
+                <span className="text-xs text-gray-400 font-normal ml-2">按部门分组，展示派单到反馈关键节点</span>
+              </h4>
+              {Object.keys(briefingData.timelineDepts).length > 0 ? (
+                <div className="space-y-5">
+                  {Object.entries(briefingData.timelineDepts).slice(0, 3).map(([dept, items]) => (
+                    <div key={dept}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Building2 className="w-3.5 h-3.5 text-blue-500" />
+                        <span className="text-sm font-medium text-gray-700">{dept}</span>
+                        <span className="text-xs text-gray-400">{items.length} 件派单</span>
+                      </div>
+                      <div className="ml-2 border-l-2 border-gray-100 pl-4 space-y-4">
+                        {items.map((item, idx) => (
+                          <div key={idx} className="relative">
+                            <div className="flex items-start gap-3">
+                              <div className="absolute -left-[1.35rem] top-1 flex flex-col items-center gap-1">
+                                <div className="flex flex-col items-center">
+                                  <div className="w-3 h-3 rounded-full bg-blue-500 border-2 border-white shadow-sm" />
+                                  <span className="text-[10px] text-gray-400 mt-0.5 whitespace-nowrap">{item.createdAt}</span>
+                                </div>
+                              </div>
+                              <div
+                                className="flex-1 bg-blue-50/50 rounded-lg p-3 cursor-pointer hover:bg-blue-50 transition-colors group"
+                                onClick={() => navigate(`/clue/${item.clueGroupId}`)}
+                              >
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-xs font-medium text-blue-600">派单</span>
+                                  <span className="text-xs text-gray-500 truncate flex-1">{item.summary}</span>
+                                  <ChevronRight className="w-3 h-3 text-gray-300 group-hover:text-blue-400 transition-colors" />
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-3 mt-3">
+                              <div className="absolute -left-[1.35rem] top-[calc(2rem+0.75rem)] flex flex-col items-center">
+                                <div className="w-3 h-3 rounded-full bg-orange-500 border-2 border-white shadow-sm" />
+                                <span className="text-[10px] text-gray-400 mt-0.5 whitespace-nowrap">{item.deadline}</span>
+                              </div>
+                              <div className="flex-1 bg-orange-50/50 rounded-lg p-3 ml-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-medium text-orange-600">改期限</span>
+                                  <span className="text-xs text-gray-500">截止 {item.deadline}</span>
+                                </div>
+                              </div>
+                            </div>
+                            {item.feedbackAt && (
+                              <div className="flex items-start gap-3 mt-3">
+                                <div className="absolute -left-[1.35rem] top-[calc(4rem+1.5rem)] flex flex-col items-center">
+                                  <div className="w-3 h-3 rounded-full bg-green-500 border-2 border-white shadow-sm" />
+                                  <span className="text-[10px] text-gray-400 mt-0.5 whitespace-nowrap">{item.feedbackAt}</span>
+                                </div>
+                                <div
+                                  className="flex-1 bg-green-50/50 rounded-lg p-3 cursor-pointer hover:bg-green-50 transition-colors group"
+                                  onClick={() => navigate('/todo')}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-medium text-green-600">反馈</span>
+                                    <span className="text-xs text-gray-500">{item.feedbackAt}</span>
+                                    <ArrowRight className="w-3 h-3 text-gray-300 group-hover:text-green-400 transition-colors ml-auto" />
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400 text-center py-4">暂无督办数据</p>
+              )}
             </div>
 
             <div className="bg-gray-50 rounded-xl border border-gray-100 p-5">

@@ -28,6 +28,8 @@ interface AppState extends PersistState {
   addAssignment: (clueGroupId: string, department: string, deadline: string, note: string) => void
   markAsDone: (assignmentId: string) => void
   updateDeadline: (assignmentId: string, newDeadline: string) => void
+  batchMarkAsDone: (assignmentIds: string[]) => void
+  batchUpdateDeadline: (assignmentIds: string[], newDeadline: string) => void
   setSelectedStreets: (streets: string[]) => void
   setSelectedCategories: (categories: string[]) => void
   setTimeRange: (range: '7d' | '30d' | 'custom') => void
@@ -134,6 +136,37 @@ export const useStore = create<AppState>()(
               ? { ...cg, assignment: { ...cg.assignment!, deadline: newDeadline, status: newStatus } }
               : cg
           )
+          return { assignments: updatedAssignments, clueGroups: updatedGroups }
+        }),
+
+      batchMarkAsDone: (assignmentIds) =>
+        set((state) => {
+          const idSet = new Set(assignmentIds)
+          const today = new Date().toISOString().slice(0, 10)
+          const updatedAssignments = state.assignments.map((a) =>
+            idSet.has(a.id) ? { ...a, status: 'done' as AssignmentStatus, feedbackAt: today } : a
+          )
+          const updatedGroups = state.clueGroups.map((cg) =>
+            cg.assignment && idSet.has(cg.assignment.id)
+              ? { ...cg, assignment: { ...cg.assignment!, status: 'done' as AssignmentStatus, feedbackAt: today } }
+              : cg
+          )
+          return { assignments: updatedAssignments, clueGroups: updatedGroups }
+        }),
+
+      batchUpdateDeadline: (assignmentIds, newDeadline) =>
+        set((state) => {
+          const idSet = new Set(assignmentIds)
+          const updatedAssignments = state.assignments.map((a) => {
+            if (!idSet.has(a.id)) return a
+            const newStatus = computeAssignmentStatus(newDeadline, a.status === 'done', a.feedbackAt)
+            return { ...a, deadline: newDeadline, status: newStatus }
+          })
+          const updatedGroups = state.clueGroups.map((cg) => {
+            if (!cg.assignment || !idSet.has(cg.assignment.id)) return cg
+            const newStatus = computeAssignmentStatus(newDeadline, cg.assignment.status === 'done', cg.assignment.feedbackAt)
+            return { ...cg, assignment: { ...cg.assignment!, deadline: newDeadline, status: newStatus } }
+          })
           return { assignments: updatedAssignments, clueGroups: updatedGroups }
         }),
 

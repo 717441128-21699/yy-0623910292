@@ -1,7 +1,7 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useStore } from '@/store'
 import { useNavigate } from 'react-router-dom'
-import { ClipboardList, CheckCircle2, AlertTriangle, Clock, ExternalLink, Calendar, Building2, RefreshCw, BarChart3, List, User } from 'lucide-react'
+import { ClipboardList, CheckCircle2, AlertTriangle, Clock, ExternalLink, Calendar, Building2, RefreshCw, BarChart3, List, User, CheckSquare, Square, X, Timer } from 'lucide-react'
 import { differenceInDays, parseISO, format } from 'date-fns'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { AssignmentStatus } from '@/types'
@@ -28,6 +28,9 @@ export default function TodoCenter() {
   const [filterStreet, setFilterStreet] = useState('')
   const [filterDept, setFilterDept] = useState('')
   const [now, setNow] = useState(new Date())
+  const [batchMode, setBatchMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [batchDeadline, setBatchDeadline] = useState('')
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -101,6 +104,58 @@ export default function TodoCenter() {
     setActiveTab('all')
   }
 
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }, [])
+
+  const toggleSelectAll = useCallback(() => {
+    if (selectedIds.size === filteredAssignments.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filteredAssignments.map((a) => a.id)))
+    }
+  }, [selectedIds.size, filteredAssignments])
+
+  const exitBatchMode = useCallback(() => {
+    setBatchMode(false)
+    setSelectedIds(new Set())
+    setBatchDeadline('')
+  }, [])
+
+  const handleBatchMarkAsDone = useCallback(() => {
+    selectedIds.forEach((id) => {
+      markAsDone(id)
+    })
+    exitBatchMode()
+  }, [selectedIds, markAsDone, exitBatchMode])
+
+  const handleBatchUpdateDeadline = useCallback(() => {
+    if (!batchDeadline) return
+    selectedIds.forEach((id) => {
+      updateDeadline(id, batchDeadline)
+    })
+    exitBatchMode()
+  }, [selectedIds, batchDeadline, updateDeadline, exitBatchMode])
+
+  const selectedDeptLabel = useMemo(() => {
+    if (selectedIds.size === 0) return ''
+    const departments = new Set<string>()
+    selectedIds.forEach((id) => {
+      const a = assignments.find((asgn) => asgn.id === id)
+      if (a) departments.add(a.department)
+    })
+    if (departments.size === 1) return [...departments][0]
+    return '多个部门'
+  }, [selectedIds, assignments])
+
   return (
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between">
@@ -138,6 +193,26 @@ export default function TodoCenter() {
               待办列表
             </button>
           </div>
+          {viewMode === 'list' && (
+            <button
+              onClick={() => {
+                if (batchMode) {
+                  exitBatchMode()
+                } else {
+                  setBatchMode(true)
+                  setSelectedIds(new Set())
+                }
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                batchMode
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              <CheckSquare className="w-3.5 h-3.5" />
+              批量处理
+            </button>
+          )}
           <button
             onClick={() => setNow(new Date())}
             className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
@@ -373,12 +448,39 @@ export default function TodoCenter() {
             transition={{ duration: 0.2 }}
             className="space-y-3"
           >
+            {batchMode && filteredAssignments.length > 0 && (
+              <div className="flex items-center gap-3 px-4 py-2 bg-blue-50 rounded-xl border border-blue-100">
+                <button
+                  onClick={toggleSelectAll}
+                  className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 transition-colors"
+                >
+                  {selectedIds.size === filteredAssignments.length ? (
+                    <CheckSquare className="w-4 h-4" />
+                  ) : (
+                    <Square className="w-4 h-4" />
+                  )}
+                  {selectedIds.size === filteredAssignments.length ? '取消全选' : '全选'}
+                </button>
+                <span className="text-xs text-blue-400">
+                  已选 {selectedIds.size} / {filteredAssignments.length} 项
+                </span>
+                <button
+                  onClick={exitBatchMode}
+                  className="ml-auto flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  退出批量
+                </button>
+              </div>
+            )}
+
             <AnimatePresence>
               {filteredAssignments.map((assignment, i) => {
                 const clue = clueGroups.find((cg) => cg.id === assignment.clueGroupId)
                 const config = statusConfig[assignment.computedStatus]
                 const StatusIcon = config.icon
                 const daysLeft = getDaysRemaining(assignment.deadline)
+                const isSelected = selectedIds.has(assignment.id)
 
                 return (
                   <motion.div
@@ -386,9 +488,24 @@ export default function TodoCenter() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.05, duration: 0.2 }}
-                    className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-sm transition-shadow"
+                    className={`bg-white rounded-xl border overflow-hidden hover:shadow-sm transition-all ${
+                      isSelected ? 'border-blue-300 bg-blue-50/30' : 'border-gray-100'
+                    }`}
                   >
                     <div className="p-4 flex items-center gap-4">
+                      {batchMode && (
+                        <button
+                          onClick={() => toggleSelect(assignment.id)}
+                          className="shrink-0 text-gray-400 hover:text-blue-600 transition-colors"
+                        >
+                          {isSelected ? (
+                            <CheckSquare className="w-5 h-5 text-blue-600" />
+                          ) : (
+                            <Square className="w-5 h-5" />
+                          )}
+                        </button>
+                      )}
+
                       <div
                         className="w-1 h-14 rounded-full shrink-0"
                         style={{ background: config.color }}
@@ -434,7 +551,7 @@ export default function TodoCenter() {
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        {assignment.computedStatus !== 'done' && (
+                        {assignment.computedStatus !== 'done' && !batchMode && (
                           <>
                             <button
                               onClick={() => markAsDone(assignment.id)}
@@ -495,6 +612,72 @@ export default function TodoCenter() {
                 <p className="text-sm">暂无{activeTab === 'all' ? '' : tabs.find(t => t.key === activeTab)?.label}待办</p>
               </div>
             )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {batchMode && selectedIds.size > 0 && (
+          <motion.div
+            key="batch-bar"
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 40 }}
+            transition={{ duration: 0.25 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-white rounded-2xl shadow-2xl border border-gray-200 px-6 py-4 flex items-center gap-5"
+          >
+            <div className="flex items-center gap-2">
+              <CheckSquare className="w-4 h-4 text-blue-600" />
+              <span className="text-sm font-semibold text-gray-800">
+                已选 {selectedIds.size} 项
+              </span>
+            </div>
+
+            <div className="w-px h-6 bg-gray-200" />
+
+            <div className="flex items-center gap-2">
+              <Building2 className="w-3.5 h-3.5 text-gray-400" />
+              <span className="text-xs text-gray-600">{selectedDeptLabel}</span>
+            </div>
+
+            <div className="w-px h-6 bg-gray-200" />
+
+            <button
+              onClick={handleBatchMarkAsDone}
+              className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors font-medium"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              批量标记已反馈
+            </button>
+
+            <div className="flex items-center gap-2">
+              <Timer className="w-3.5 h-3.5 text-gray-400" />
+              <input
+                type="date"
+                value={batchDeadline}
+                onChange={(e) => setBatchDeadline(e.target.value)}
+                className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-blue-400"
+              />
+              <button
+                onClick={handleBatchUpdateDeadline}
+                disabled={!batchDeadline}
+                className={`flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg font-medium transition-colors ${
+                  batchDeadline
+                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                批量改期限
+              </button>
+            </div>
+
+            <button
+              onClick={exitBatchMode}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors ml-1"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
