@@ -17,7 +17,7 @@ const statusConfig: Record<AssignmentStatus, { label: string; color: string; bg:
 type ViewMode = 'list' | 'overview'
 
 export default function TodoCenter() {
-  const { getComputedAssignments, clueGroups, markAsDone, updateDeadline, getFilteredData } = useStore()
+  const { getComputedAssignments, clueGroups, markAsDone, updateDeadline, batchMarkAsDone, batchUpdateDeadline, getFilteredData } = useStore()
   const navigate = useNavigate()
   const assignments = getComputedAssignments()
 
@@ -131,19 +131,15 @@ export default function TodoCenter() {
   }, [])
 
   const handleBatchMarkAsDone = useCallback(() => {
-    selectedIds.forEach((id) => {
-      markAsDone(id)
-    })
+    batchMarkAsDone([...selectedIds])
     exitBatchMode()
-  }, [selectedIds, markAsDone, exitBatchMode])
+  }, [selectedIds, batchMarkAsDone, exitBatchMode])
 
   const handleBatchUpdateDeadline = useCallback(() => {
     if (!batchDeadline) return
-    selectedIds.forEach((id) => {
-      updateDeadline(id, batchDeadline)
-    })
+    batchUpdateDeadline([...selectedIds], batchDeadline)
     exitBatchMode()
-  }, [selectedIds, batchDeadline, updateDeadline, exitBatchMode])
+  }, [selectedIds, batchDeadline, batchUpdateDeadline, exitBatchMode])
 
   const selectedDeptLabel = useMemo(() => {
     if (selectedIds.size === 0) return ''
@@ -638,13 +634,23 @@ export default function TodoCenter() {
             <div className="flex items-center gap-2">
               <Building2 className="w-3.5 h-3.5 text-gray-400" />
               <span className="text-xs text-gray-600">{selectedDeptLabel}</span>
+              {selectedDeptLabel === '多个部门' && (
+                <span className="text-xs text-orange-500 font-medium">
+                  请选择同一部门的事项
+                </span>
+              )}
             </div>
 
             <div className="w-px h-6 bg-gray-200" />
 
             <button
               onClick={handleBatchMarkAsDone}
-              className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors font-medium"
+              disabled={selectedDeptLabel === '多个部门'}
+              className={`flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg font-medium transition-colors ${
+                selectedDeptLabel === '多个部门'
+                  ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  : 'bg-green-500 text-white hover:bg-green-600'
+              }`}
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
               批量标记已反馈
@@ -656,13 +662,18 @@ export default function TodoCenter() {
                 type="date"
                 value={batchDeadline}
                 onChange={(e) => setBatchDeadline(e.target.value)}
-                className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-blue-400"
+                disabled={selectedDeptLabel === '多个部门'}
+                className={`px-2 py-1.5 border rounded-lg text-xs focus:outline-none ${
+                  selectedDeptLabel === '多个部门'
+                    ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed'
+                    : 'border-gray-200 focus:border-blue-400'
+                }`}
               />
               <button
                 onClick={handleBatchUpdateDeadline}
-                disabled={!batchDeadline}
+                disabled={!batchDeadline || selectedDeptLabel === '多个部门'}
                 className={`flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg font-medium transition-colors ${
-                  batchDeadline
+                  batchDeadline && selectedDeptLabel !== '多个部门'
                     ? 'bg-blue-500 text-white hover:bg-blue-600'
                     : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                 }`}

@@ -18,7 +18,6 @@ type ViewMode = 'list' | 'briefing'
 export default function ClueCenter() {
   const {
     getFilteredData,
-    getComputedAssignments,
     clueGroups,
     selectedStreets,
     selectedCategories,
@@ -31,71 +30,66 @@ export default function ClueCenter() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const categoryFilterParam = searchParams.get('category') || ''
-  const streetFilterParam = searchParams.get('street') || ''
   const streetsParam = searchParams.get('streets') || ''
   const categoriesParam = searchParams.get('categories') || ''
   const timeRangeParam = searchParams.get('timeRange') || ''
-  const deptFilterParam = searchParams.get('dept') || ''
+  const deptParam = searchParams.get('dept') || ''
 
   const [viewMode, setViewMode] = useState<ViewMode>('list')
-  const [filterCategory, setFilterCategory] = useState<Category | ''>(
-    CATEGORIES.includes(categoryFilterParam as Category) ? (categoryFilterParam as Category) : ''
-  )
-  const [filterStreet, setFilterStreet] = useState(streetFilterParam || '')
-  const [filterDept, setFilterDept] = useState(deptFilterParam || '')
+  const [filterDept, setFilterDept] = useState('')
+  const [streetPickerValue, setStreetPickerValue] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     const streetsFromUrl = streetsParam ? streetsParam.split(',').filter(Boolean) : []
     const categoriesFromUrl = categoriesParam ? categoriesParam.split(',').filter((c): c is Category => CATEGORIES.includes(c as Category)) : []
-    const timeFromUrl = (timeRangeParam === '7d' || timeRangeParam === '30d') ? timeRangeParam : null
+    const timeFromUrl = (timeRangeParam === '7d' || timeRangeParam === '30d' || timeRangeParam === 'custom') ? timeRangeParam : null
+    const deptFromUrl = deptParam || ''
 
     let hasChanges = false
     if (streetsFromUrl.length > 0 && (selectedStreets.length !== streetsFromUrl.length || streetsFromUrl.some(s => !selectedStreets.includes(s)))) {
       setSelectedStreets(streetsFromUrl)
-      if (!streetsFromUrl.includes(filterStreet) && !filterStreet) {
-        setFilterStreet(streetsFromUrl[0])
-      }
       hasChanges = true
     }
     if (categoriesFromUrl.length > 0 && (selectedCategories.length !== categoriesFromUrl.length || categoriesFromUrl.some(c => !selectedCategories.includes(c)))) {
       setSelectedCategories(categoriesFromUrl)
-      if (!filterCategory && categoriesFromUrl.length > 0) {
-        setFilterCategory(categoriesFromUrl[0])
-      }
       hasChanges = true
     }
     if (timeFromUrl && timeFromUrl !== timeRange) {
-      setTimeRange(timeFromUrl)
+      setTimeRange(timeFromUrl as '7d' | '30d' | 'custom')
       hasChanges = true
+    }
+    if (deptFromUrl !== filterDept) {
+      setFilterDept(deptFromUrl)
     }
     if (hasChanges) {
       applyFilters()
     }
-  }, [])
-
-  useEffect(() => {
-    if (CATEGORIES.includes(categoryFilterParam as Category) && !selectedCategories.includes(categoryFilterParam as Category)) {
-      setSelectedCategories([categoryFilterParam as Category])
-      applyFilters()
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const { filteredClueGroups, alertItems, categoryStats, totalAppeals } = getFilteredData()
-  const computedAssignments = getComputedAssignments()
 
-  const filtered = useMemo(() => {
+  const finalFiltered = useMemo(() => {
     return filteredClueGroups.filter((cg) => {
-      if (filterCategory && cg.category !== filterCategory) return false
-      if (filterStreet && !cg.appeals.some(a => a.street === filterStreet)) return false
       if (filterDept) {
         if (!cg.assignment || cg.assignment.department !== filterDept) return false
       }
       return true
     })
-  }, [filteredClueGroups, filterCategory, filterStreet, filterDept])
+  }, [filteredClueGroups, filterDept])
+
+  const finalAssignments = useMemo(() => {
+    return finalFiltered
+      .filter(cg => cg.assignment)
+      .map(cg => {
+        const a = cg.assignment!
+        const isDone = a.status === 'done' || !!a.feedbackAt
+        const computedStatus = computeAssignmentStatus(a.deadline, isDone, a.feedbackAt)
+        return { ...a, computedStatus }
+      })
+  }, [finalFiltered])
 
   const activeFilterTags = useMemo(() => {
     const tags: { key: string; label: string; type: 'street' | 'category' | 'timeRange' | 'dept'; value: string }[] = []
@@ -114,20 +108,36 @@ export default function ClueCenter() {
     return tags
   }, [selectedStreets, selectedCategories, timeRange, filterDept])
 
+  const updateUrlParams = (streets: string[], categories: string[], dept: string) => {
+    const p = new URLSearchParams(searchParams)
+    if (streets.length > 0) p.set('streets', streets.join(','))
+    else p.delete('streets')
+    if (categories.length > 0) p.set('categories', categories.join(','))
+    else p.delete('categories')
+    if (dept) p.set('dept', dept)
+    else p.delete('dept')
+    p.delete('category')
+    p.delete('street')
+    setSearchParams(p)
+  }
+
   const removeFilterTag = (type: 'street' | 'category' | 'timeRange' | 'dept', value: string) => {
     if (type === 'street') {
-      setSelectedStreets(selectedStreets.filter(s => s !== value))
-      if (filterStreet === value) setFilterStreet('')
+      const next = selectedStreets.filter(s => s !== value)
+      setSelectedStreets(next)
+      updateUrlParams(next, selectedCategories, filterDept)
       applyFilters()
     } else if (type === 'category') {
-      setSelectedCategories(selectedCategories.filter(c => c !== value))
-      if (filterCategory === value) setFilterCategory('')
+      const next = selectedCategories.filter(c => c !== value)
+      setSelectedCategories(next)
+      updateUrlParams(selectedStreets, next, filterDept)
       applyFilters()
     } else if (type === 'timeRange') {
       setTimeRange('7d')
       applyFilters()
     } else if (type === 'dept') {
       setFilterDept('')
+      updateUrlParams(selectedStreets, selectedCategories, '')
     }
   }
 
@@ -136,12 +146,36 @@ export default function ClueCenter() {
     setSelectedCategories([])
     setTimeRange('7d')
     setFilterDept('')
-    setFilterCategory('')
-    setFilterStreet('')
+    setStreetPickerValue('')
+    updateUrlParams([], [], '')
     applyFilters()
   }
 
-  const getClueComputedStatus = (cg: typeof filteredClueGroups[0]) => {
+  const toggleCategory = (cat: Category) => {
+    let next: string[]
+    if (selectedCategories.includes(cat)) {
+      next = selectedCategories.filter(c => c !== cat)
+    } else {
+      next = [...selectedCategories, cat]
+    }
+    setSelectedCategories(next)
+    updateUrlParams(selectedStreets, next, filterDept)
+    applyFilters()
+  }
+
+  const handleStreetPick = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value
+    if (!value) return
+    if (!selectedStreets.includes(value)) {
+      const next = [...selectedStreets, value]
+      setSelectedStreets(next)
+      updateUrlParams(next, selectedCategories, filterDept)
+      applyFilters()
+    }
+    setStreetPickerValue('')
+  }
+
+  const getClueComputedStatus = (cg: typeof finalFiltered[0]) => {
     if (!cg.isAssigned || !cg.assignment) return 'unassigned' as const
     const a = cg.assignment
     const isDone = a.status === 'done' || !!a.feedbackAt
@@ -149,12 +183,12 @@ export default function ClueCenter() {
   }
 
   const briefingData = useMemo(() => {
-    const highFreqClues = [...filteredClueGroups]
+    const highFreqClues = [...finalFiltered]
       .sort((a, b) => b.appeals.length - a.appeals.length)
       .slice(0, 5)
 
     const deptStats: Record<string, { total: number; overdue: number; urgent: number; normal: number; done: number }> = {}
-    for (const a of computedAssignments) {
+    for (const a of finalAssignments) {
       if (!deptStats[a.department]) deptStats[a.department] = { total: 0, overdue: 0, urgent: 0, normal: 0, done: 0 }
       deptStats[a.department].total += 1
       deptStats[a.department][a.computedStatus] += 1
@@ -162,15 +196,15 @@ export default function ClueCenter() {
     const departments = Object.entries(deptStats).sort((a, b) => (b[1].overdue + b[1].urgent) - (a[1].overdue + a[1].urgent))
 
     const statusSummary = {
-      total: computedAssignments.length,
-      overdue: computedAssignments.filter(a => a.computedStatus === 'overdue').length,
-      urgent: computedAssignments.filter(a => a.computedStatus === 'urgent').length,
-      normal: computedAssignments.filter(a => a.computedStatus === 'normal').length,
-      done: computedAssignments.filter(a => a.computedStatus === 'done').length,
+      total: finalAssignments.length,
+      overdue: finalAssignments.filter(a => a.computedStatus === 'overdue').length,
+      urgent: finalAssignments.filter(a => a.computedStatus === 'urgent').length,
+      normal: finalAssignments.filter(a => a.computedStatus === 'normal').length,
+      done: finalAssignments.filter(a => a.computedStatus === 'done').length,
     }
 
     const timelineDepts: Record<string, { clueGroupId: string; summary: string; createdAt: string; deadline: string; feedbackAt?: string; isDone: boolean }[]> = {}
-    for (const cg of filteredClueGroups) {
+    for (const cg of finalFiltered) {
       if (!cg.assignment) continue
       const dept = cg.assignment.department
       if (!timelineDepts[dept]) timelineDepts[dept] = []
@@ -188,7 +222,7 @@ export default function ClueCenter() {
     })
 
     return { highFreqClues, departments, statusSummary, timelineDepts }
-  }, [filteredClueGroups, computedAssignments])
+  }, [finalFiltered, finalAssignments])
 
   const generateBriefingText = (): string => {
     const today = format(new Date(), 'yyyy年MM月dd日')
@@ -198,9 +232,10 @@ export default function ClueCenter() {
     const filterDesc: string[] = []
     if (selectedStreets.length > 0) filterDesc.push(`${selectedStreets.length}个街道（${selectedStreets.join('、')}）`)
     if (selectedCategories.length > 0) filterDesc.push(`${selectedCategories.length}类（${selectedCategories.join('、')}）`)
-    filterDesc.push(timeRange === '7d' ? '近7天' : '近30天')
+    if (filterDept) filterDesc.push(`${filterDept}`)
+    filterDesc.push(timeRange === '7d' ? '近7天' : timeRange === '30d' ? '近30天' : '自定义')
     text += `  周期范围：${filterDesc.join(' · ')}\n`
-    text += `  本周期共接诉求 ${totalAppeals} 件，${filteredClueGroups.length} 组线索。\n`
+    text += `  本周期共接诉求 ${totalAppeals} 件，${finalFiltered.length} 组线索。\n`
     text += `  已派单 ${briefingData.statusSummary.total} 件，超期 ${briefingData.statusSummary.overdue} 件，临期 ${briefingData.statusSummary.urgent} 件，已反馈 ${briefingData.statusSummary.done} 件。\n\n`
 
     if (alertItems.length > 0) {
@@ -264,7 +299,7 @@ export default function ClueCenter() {
       await navigator.clipboard.writeText(text)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch (e) {
+    } catch {
       const textarea = document.createElement('textarea')
       textarea.value = text
       document.body.appendChild(textarea)
@@ -281,38 +316,39 @@ export default function ClueCenter() {
   }
 
   const drillToCategory = (category: Category) => {
-    const params = new URLSearchParams(searchParams)
-    params.set('category', category)
-    setSearchParams(params)
-    setFilterCategory(category)
+    if (!selectedCategories.includes(category)) {
+      const next = [...selectedCategories, category]
+      setSelectedCategories(next)
+      updateUrlParams(selectedStreets, next, filterDept)
+      applyFilters()
+    }
     setViewMode('list')
   }
 
   const drillToStreet = (street: string) => {
-    const params = new URLSearchParams(searchParams)
-    params.set('street', street)
-    setSearchParams(params)
-    setFilterStreet(street)
+    if (!selectedStreets.includes(street)) {
+      const next = [...selectedStreets, street]
+      setSelectedStreets(next)
+      updateUrlParams(next, selectedCategories, filterDept)
+      applyFilters()
+    }
     setViewMode('list')
   }
 
   const drillToDept = (dept: string) => {
-    setFilterDept(dept === filterDept ? '' : dept)
+    const next = dept === filterDept ? '' : dept
+    setFilterDept(next)
+    updateUrlParams(selectedStreets, selectedCategories, next)
     setViewMode('list')
   }
 
-  const toggleCategoryFilter = (cat: Category) => {
-    if (selectedCategories.includes(cat)) {
-      setSelectedCategories(selectedCategories.filter(c => c !== cat))
-    } else {
-      setSelectedCategories([...selectedCategories, cat])
-    }
-    setFilterCategory(filterCategory === cat ? '' : cat)
-    const p = new URLSearchParams(searchParams)
-    if (filterCategory === cat) p.delete('category'); else p.set('category', cat)
-    setSearchParams(p)
-    applyFilters()
-  }
+  const allDepartments = useMemo(() => {
+    const depts = new Set<string>()
+    clueGroups.forEach(cg => {
+      if (cg.assignment) depts.add(cg.assignment.department)
+    })
+    return Array.from(depts)
+  }, [clueGroups])
 
   return (
     <div className="p-6 space-y-5">
@@ -327,7 +363,7 @@ export default function ClueCenter() {
             </h2>
             <p className="text-xs text-gray-400">
               {viewMode === 'list'
-                ? `相似诉求已自动合并 · ${selectedStreets.length > 0 ? `${selectedStreets.length}个街道` : '全部街道'} · ${timeRange === '7d' ? '近7天' : '近30天'}`
+                ? `相似诉求已自动合并 · ${selectedStreets.length > 0 ? `${selectedStreets.length}个街道` : '全部街道'} · ${timeRange === '7d' ? '近7天' : timeRange === '30d' ? '近30天' : '自定义'}`
                 : '晨会汇报材料自动汇总，点击卡片可下钻查看'}
             </p>
           </div>
@@ -357,9 +393,9 @@ export default function ClueCenter() {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-1 bg-gray-50 rounded-lg p-1">
           <button
-            onClick={() => { setFilterCategory(''); setSelectedCategories([]); const p = new URLSearchParams(searchParams); p.delete('category'); setSearchParams(p); applyFilters() }}
+            onClick={() => { setSelectedCategories([]); updateUrlParams(selectedStreets, [], filterDept); applyFilters() }}
             className={`px-3 py-1.5 rounded-md text-sm transition-all ${
-              filterCategory === '' && selectedCategories.length === 0 ? 'bg-white text-blue-600 shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
+              selectedCategories.length === 0 ? 'bg-white text-blue-600 shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
             全部
@@ -367,7 +403,7 @@ export default function ClueCenter() {
           {CATEGORIES.map((cat) => (
             <button
               key={cat}
-              onClick={() => toggleCategoryFilter(cat)}
+              onClick={() => toggleCategory(cat)}
               className={`px-3 py-1.5 rounded-md text-sm transition-all ${
                 selectedCategories.includes(cat) ? 'bg-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
               }`}
@@ -378,42 +414,44 @@ export default function ClueCenter() {
           ))}
         </div>
         <select
-          value={filterStreet}
-          onChange={(e) => {
-            setFilterStreet(e.target.value)
-            const p = new URLSearchParams(searchParams)
-            if (e.target.value) p.set('street', e.target.value); else p.delete('street')
-            setSearchParams(p)
-          }}
+          value={streetPickerValue}
+          onChange={handleStreetPick}
           className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
         >
-          <option value="">全部街道</option>
+          <option value="">添加街道筛选</option>
           {STREETS.map((s) => (
-            <option key={s} value={s}>{s}</option>
+            <option key={s} value={s} disabled={selectedStreets.includes(s)}>
+              {s}{selectedStreets.includes(s) ? ' ✓' : ''}
+            </option>
           ))}
         </select>
         <select
           value={filterDept}
-          onChange={(e) => setFilterDept(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value
+            setFilterDept(val)
+            updateUrlParams(selectedStreets, selectedCategories, val)
+          }}
           className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
         >
           <option value="">全部部门</option>
-          {Array.from(new Set(computedAssignments.map(a => a.department))).map((d) => (
+          {allDepartments.map((d) => (
             <option key={d} value={d}>{d}</option>
           ))}
         </select>
-        {(selectedStreets.length > 0 || selectedCategories.length > 0 || timeRange !== '7d') && (
+        {(selectedStreets.length > 0 || selectedCategories.length > 0 || timeRange !== '7d' || filterDept) && (
           <div className="flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-50 text-blue-600">
             <Filter className="w-3 h-3" />
             <span>
               {selectedStreets.length > 0 && `${selectedStreets.length}街道 `}
               {selectedCategories.length > 0 && `${selectedCategories.length}类型 `}
+              {filterDept && `1部门 `}
               {timeRange !== '7d' && `${timeRange === '30d' ? '近30天' : '自定义'}`}
             </span>
           </div>
         )}
         <span className="text-sm text-gray-400 ml-auto">
-          共 {filtered.length} 组线索
+          共 {finalFiltered.length} 组线索
         </span>
       </div>
 
@@ -459,7 +497,7 @@ export default function ClueCenter() {
             transition={{ duration: 0.2 }}
             className="space-y-3"
           >
-            {filtered.map((cg, i) => {
+            {finalFiltered.map((cg, i) => {
               const status = getClueComputedStatus(cg)
               const statusColor = status === 'unassigned' ? 'gray' :
                 status === 'done' ? 'green' :
@@ -627,7 +665,7 @@ export default function ClueCenter() {
               </h4>
               {alertItems.length > 0 ? (
                 <div className="grid grid-cols-2 gap-3">
-                  {alertItems.map((alert, i) => (
+                  {alertItems.map((alert) => (
                     <motion.div
                       key={alert.id}
                       whileHover={{ scale: 1.01, y: -2 }}
@@ -785,7 +823,7 @@ export default function ClueCenter() {
                       key={stat.category}
                       onClick={() => drillToCategory(stat.category)}
                       className={`cursor-pointer p-2 rounded-md transition-colors ${
-                        filterCategory === stat.category ? 'bg-blue-50' : 'hover:bg-gray-50'
+                        selectedCategories.includes(stat.category) ? 'bg-blue-50' : 'hover:bg-gray-50'
                       }`}
                     >
                       <div className="flex items-center justify-between text-sm mb-1">
@@ -859,10 +897,14 @@ export default function ClueCenter() {
                                 <div className="w-3 h-3 rounded-full bg-orange-500 border-2 border-white shadow-sm" />
                                 <span className="text-[10px] text-gray-400 mt-0.5 whitespace-nowrap">{item.deadline}</span>
                               </div>
-                              <div className="flex-1 bg-orange-50/50 rounded-lg p-3 ml-0">
+                              <div
+                                className="flex-1 bg-orange-50/50 rounded-lg p-3 ml-0 cursor-pointer hover:bg-orange-50 transition-colors group"
+                                onClick={() => navigate(`/clue/${item.clueGroupId}`)}
+                              >
                                 <div className="flex items-center gap-2">
                                   <span className="text-xs font-medium text-orange-600">改期限</span>
                                   <span className="text-xs text-gray-500">截止 {item.deadline}</span>
+                                  <ChevronRight className="w-3 h-3 text-gray-300 group-hover:text-orange-400 transition-colors ml-auto" />
                                 </div>
                               </div>
                             </div>
