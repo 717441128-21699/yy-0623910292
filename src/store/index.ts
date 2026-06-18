@@ -43,6 +43,11 @@ interface AppState extends PersistState {
     filteredClueGroups: ReturnType<typeof getFilteredClueGroups>
     totalAppeals: number
   }
+  getCurrentFilters: () => {
+    selectedStreets: string[]
+    selectedCategories: string[]
+    timeRange: '7d' | '30d' | 'custom'
+  }
 }
 
 const baseClueGroups = getBaseClueGroups()
@@ -53,13 +58,31 @@ const initialState: PersistState = {
   assignments: baseAssignments,
 }
 
+const FILTER_STORAGE_KEY = 'gov-hotline-filters'
+
+function loadFiltersFromStorage(): { selectedStreets: string[]; selectedCategories: string[]; timeRange: '7d' | '30d' | 'custom' } | null {
+  try {
+    const raw = sessionStorage.getItem(FILTER_STORAGE_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch { /* ignore */ }
+  return null
+}
+
+function saveFiltersToStorage(state: { selectedStreets: string[]; selectedCategories: string[]; timeRange: '7d' | '30d' | 'custom' }) {
+  try {
+    sessionStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(state))
+  } catch { /* ignore */ }
+}
+
+const savedFilters = loadFiltersFromStorage()
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
       ...initialState,
-      selectedStreets: [],
-      selectedCategories: [],
-      timeRange: '7d',
+      selectedStreets: savedFilters?.selectedStreets ?? [],
+      selectedCategories: savedFilters?.selectedCategories ?? [],
+      timeRange: savedFilters?.timeRange ?? '7d',
       filterApplied: true,
 
       addAssignment: (clueGroupId, department, deadline, note) =>
@@ -114,11 +137,40 @@ export const useStore = create<AppState>()(
           return { assignments: updatedAssignments, clueGroups: updatedGroups }
         }),
 
-      setSelectedStreets: (streets) => set({ selectedStreets: streets, filterApplied: false }),
-      setSelectedCategories: (categories) => set({ selectedCategories: categories, filterApplied: false }),
-      setTimeRange: (range) => set({ timeRange: range, filterApplied: false }),
+      setSelectedStreets: (streets) => {
+        const state = get()
+        const next = { selectedStreets: streets }
+        saveFiltersToStorage({
+          selectedStreets: streets,
+          selectedCategories: state.selectedCategories,
+          timeRange: state.timeRange,
+        })
+        set({ ...next, filterApplied: false })
+      },
+      setSelectedCategories: (categories) => {
+        const state = get()
+        const next = { selectedCategories: categories }
+        saveFiltersToStorage({
+          selectedStreets: state.selectedStreets,
+          selectedCategories: categories,
+          timeRange: state.timeRange,
+        })
+        set({ ...next, filterApplied: false })
+      },
+      setTimeRange: (range) => {
+        const state = get()
+        saveFiltersToStorage({
+          selectedStreets: state.selectedStreets,
+          selectedCategories: state.selectedCategories,
+          timeRange: range,
+        })
+        set({ timeRange: range, filterApplied: false })
+      },
       applyFilters: () => set({ filterApplied: true }),
-      resetFilters: () => set({ selectedStreets: [], selectedCategories: [], timeRange: '7d', filterApplied: true }),
+      resetFilters: () => {
+        saveFiltersToStorage({ selectedStreets: [], selectedCategories: [], timeRange: '7d' })
+        set({ selectedStreets: [], selectedCategories: [], timeRange: '7d', filterApplied: true })
+      },
 
       getComputedAssignments: () => {
         const state = get()
@@ -140,6 +192,15 @@ export const useStore = create<AppState>()(
         const filteredClueGroups = getFilteredClueGroups(clueGroups, selectedStreets, selectedCategories)
         const totalAppeals = filteredAppeals.length
         return { filteredAppeals, categoryStats, alertItems, trendData, streetHeat, filteredClueGroups, totalAppeals }
+      },
+
+      getCurrentFilters: () => {
+        const state = get()
+        return {
+          selectedStreets: state.selectedStreets,
+          selectedCategories: state.selectedCategories,
+          timeRange: state.timeRange,
+        }
       },
     }),
     {

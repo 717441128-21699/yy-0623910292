@@ -2,6 +2,7 @@ import { Droplets, Car, Building2, GraduationCap, MoreHorizontal, TrendingUp, Tr
 import { CATEGORY_COLORS, type Category } from '@/types'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { useStore } from '@/store'
 
 const categoryIcons: Record<Category, React.ElementType> = {
   '供水供电': Droplets,
@@ -17,6 +18,7 @@ interface Props {
 
 export default function CategoryCards({ stats }: Props) {
   const navigate = useNavigate()
+  const getCurrentFilters = useStore((s) => s.getCurrentFilters)
 
   return (
     <div className="grid grid-cols-5 gap-4">
@@ -25,13 +27,26 @@ export default function CategoryCards({ stats }: Props) {
         const color = CATEGORY_COLORS[stat.category]
         const isUp = stat.change > 0
 
+        const handleClick = () => {
+          const filters = getCurrentFilters()
+          const params = new URLSearchParams()
+          params.set('category', stat.category)
+          if (filters.selectedStreets.length > 0) {
+            params.set('streets', filters.selectedStreets.join(','))
+          }
+          if (filters.timeRange) {
+            params.set('timeRange', filters.timeRange)
+          }
+          navigate(`/clue/all?${params.toString()}`)
+        }
+
         return (
           <motion.button
             key={stat.category}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.08, duration: 0.3 }}
-            onClick={() => navigate(`/clue/all?category=${encodeURIComponent(stat.category)}`)}
+            onClick={handleClick}
             className="bg-white rounded-xl border border-gray-100 p-4 text-left hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group"
           >
             <div className="flex items-center justify-between mb-3">

@@ -96,7 +96,7 @@ export const baseClueGroups: ClueGroup[] = [
   { id: 'cg23', category: '其他', appeals: appeals.filter(a => a.clueGroupId === 'cg23'), summary: '永安街道广场舞噪音扰民', firstSeenAt: d(2), locations: ['永安街道广场'], isAssigned: false },
 ]
 
-export function computeAssignmentStatus(deadline: string, isDone: boolean, feedbackAt?: string): 'overdue' | 'urgent' | 'done' {
+export function computeAssignmentStatus(deadline: string, isDone: boolean, feedbackAt?: string): 'overdue' | 'urgent' | 'normal' | 'done' {
   if (isDone || feedbackAt) return 'done'
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -105,7 +105,7 @@ export function computeAssignmentStatus(deadline: string, isDone: boolean, feedb
   const diff = differenceInDays(deadlineDate, today)
   if (diff < 0) return 'overdue'
   if (diff <= 3) return 'urgent'
-  return 'urgent'
+  return 'normal'
 }
 
 export function getFilteredAppeals(

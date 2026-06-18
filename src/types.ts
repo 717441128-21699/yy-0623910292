@@ -2,7 +2,7 @@ export type Source = 'hotline' | 'governance' | 'forum'
 
 export type Category = '供水供电' | '道路出行' | '物业纠纷' | '教育医疗' | '其他'
 
-export type AssignmentStatus = 'overdue' | 'urgent' | 'done'
+export type AssignmentStatus = 'overdue' | 'urgent' | 'normal' | 'done'
 
 export interface Appeal {
   id: string

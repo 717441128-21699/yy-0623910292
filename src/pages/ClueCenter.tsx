@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useStore } from '@/store'
 import { CATEGORIES, CATEGORY_COLORS, SOURCE_LABELS, STREETS, type Category, type Source } from '@/types'
-import { FileSearch, ChevronDown, ChevronUp, Phone, MessageSquare, Globe, MapPin, Clock, Users, FileText, Copy, CheckCircle2, AlertTriangle, Building2, TrendingUp } from 'lucide-react'
+import { FileSearch, ChevronDown, ChevronUp, Phone, MessageSquare, Globe, MapPin, Clock, Users, FileText, Copy, CheckCircle2, AlertTriangle, Building2, TrendingUp, Filter, AlertCircle, CheckCircle, User } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { format } from 'date-fns'
+import { computeAssignmentStatus } from '@/data/mockData'
 
 const sourceIcons: Record<Source, React.ElementType> = {
   hotline: Phone,
@@ -15,20 +16,63 @@ const sourceIcons: Record<Source, React.ElementType> = {
 type ViewMode = 'list' | 'briefing'
 
 export default function ClueCenter() {
-  const { getFilteredData, getComputedAssignments, clueGroups, selectedStreets, selectedCategories, timeRange } = useStore()
+  const {
+    getFilteredData,
+    getComputedAssignments,
+    clueGroups,
+    selectedStreets,
+    selectedCategories,
+    timeRange,
+    setSelectedStreets,
+    setSelectedCategories,
+    setTimeRange,
+    applyFilters,
+  } = useStore()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const categoryFilterParam = searchParams.get('category') || ''
   const streetFilterParam = searchParams.get('street') || ''
+  const streetsParam = searchParams.get('streets') || ''
+  const timeRangeParam = searchParams.get('timeRange') || ''
+  const deptFilterParam = searchParams.get('dept') || ''
 
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [filterCategory, setFilterCategory] = useState<Category | ''>(
     CATEGORIES.includes(categoryFilterParam as Category) ? (categoryFilterParam as Category) : ''
   )
   const [filterStreet, setFilterStreet] = useState(streetFilterParam || '')
+  const [filterDept, setFilterDept] = useState(deptFilterParam || '')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    const streetsFromUrl = streetsParam ? streetsParam.split(',').filter(Boolean) : []
+    const timeFromUrl = (timeRangeParam === '7d' || timeRangeParam === '30d') ? timeRangeParam : null
+
+    let hasChanges = false
+    if (streetsFromUrl.length > 0 && (selectedStreets.length !== streetsFromUrl.length || streetsFromUrl.some(s => !selectedStreets.includes(s)))) {
+      setSelectedStreets(streetsFromUrl)
+      if (!streetsFromUrl.includes(filterStreet) && !filterStreet) {
+        setFilterStreet(streetsFromUrl[0])
+      }
+      hasChanges = true
+    }
+    if (timeFromUrl && timeFromUrl !== timeRange) {
+      setTimeRange(timeFromUrl)
+      hasChanges = true
+    }
+    if (hasChanges) {
+      applyFilters()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (CATEGORIES.includes(categoryFilterParam as Category) && !selectedCategories.includes(categoryFilterParam as Category)) {
+      setSelectedCategories([categoryFilterParam as Category])
+      applyFilters()
+    }
+  }, [])
 
   const { filteredClueGroups, alertItems, categoryStats, totalAppeals } = getFilteredData()
   const computedAssignments = getComputedAssignments()
@@ -37,18 +81,28 @@ export default function ClueCenter() {
     return filteredClueGroups.filter((cg) => {
       if (filterCategory && cg.category !== filterCategory) return false
       if (filterStreet && !cg.appeals.some(a => a.street === filterStreet)) return false
+      if (filterDept) {
+        if (!cg.assignment || cg.assignment.department !== filterDept) return false
+      }
       return true
     })
-  }, [filteredClueGroups, filterCategory, filterStreet])
+  }, [filteredClueGroups, filterCategory, filterStreet, filterDept])
+
+  const getClueComputedStatus = (cg: typeof filteredClueGroups[0]) => {
+    if (!cg.isAssigned || !cg.assignment) return 'unassigned' as const
+    const a = cg.assignment
+    const isDone = a.status === 'done' || !!a.feedbackAt
+    return computeAssignmentStatus(a.deadline, isDone, a.feedbackAt)
+  }
 
   const briefingData = useMemo(() => {
     const highFreqClues = [...filteredClueGroups]
       .sort((a, b) => b.appeals.length - a.appeals.length)
       .slice(0, 5)
 
-    const deptStats: Record<string, { total: number; overdue: number; urgent: number; done: number }> = {}
+    const deptStats: Record<string, { total: number; overdue: number; urgent: number; normal: number; done: number }> = {}
     for (const a of computedAssignments) {
-      if (!deptStats[a.department]) deptStats[a.department] = { total: 0, overdue: 0, urgent: 0, done: 0 }
+      if (!deptStats[a.department]) deptStats[a.department] = { total: 0, overdue: 0, urgent: 0, normal: 0, done: 0 }
       deptStats[a.department].total += 1
       deptStats[a.department][a.computedStatus] += 1
     }
@@ -58,6 +112,7 @@ export default function ClueCenter() {
       total: computedAssignments.length,
       overdue: computedAssignments.filter(a => a.computedStatus === 'overdue').length,
       urgent: computedAssignments.filter(a => a.computedStatus === 'urgent').length,
+      normal: computedAssignments.filter(a => a.computedStatus === 'normal').length,
       done: computedAssignments.filter(a => a.computedStatus === 'done').length,
     }
 
@@ -69,7 +124,12 @@ export default function ClueCenter() {
     let text = `【民生诉求晨会简报】${today}\n\n`
 
     text += `一、总体情况\n`
-    text += `  本周期共接诉求 ${totalAppeals} 件，涉及 ${selectedStreets.length > 0 ? selectedStreets.length : 6} 个街道，${filteredClueGroups.length} 组线索。\n`
+    const filterDesc: string[] = []
+    if (selectedStreets.length > 0) filterDesc.push(`${selectedStreets.length}个街道（${selectedStreets.join('、')}）`)
+    if (selectedCategories.length > 0) filterDesc.push(`${selectedCategories.length}类（${selectedCategories.join('、')}）`)
+    filterDesc.push(timeRange === '7d' ? '近7天' : '近30天')
+    text += `  周期范围：${filterDesc.join(' · ')}\n`
+    text += `  本周期共接诉求 ${totalAppeals} 件，${filteredClueGroups.length} 组线索。\n`
     text += `  已派单 ${briefingData.statusSummary.total} 件，超期 ${briefingData.statusSummary.overdue} 件，临期 ${briefingData.statusSummary.urgent} 件，已反馈 ${briefingData.statusSummary.done} 件。\n\n`
 
     if (alertItems.length > 0) {
@@ -82,12 +142,14 @@ export default function ClueCenter() {
 
     text += `三、高频线索（按留言数排序）\n`
     briefingData.highFreqClues.forEach((cg, i) => {
-      const status = !cg.isAssigned ? '待派单' :
-        cg.assignment?.status === 'done' ? '已反馈' :
-        cg.assignment?.status === 'overdue' ? '超期' : '跟办中'
+      const status = getClueComputedStatus(cg)
+      const statusLabel = status === 'unassigned' ? '待派单' :
+        status === 'done' ? '已反馈' :
+        status === 'overdue' ? '超期' :
+        status === 'urgent' ? '临期' : '正常'
       const dept = cg.assignment?.department || '待指派'
       text += `  ${i + 1}. 【${cg.category}】${cg.summary}\n`
-      text += `     留言 ${cg.appeals.length} 条 · 涉及 ${cg.locations.join('、')} · ${dept} · ${status}\n`
+      text += `     留言 ${cg.appeals.length} 条 · 涉及 ${cg.locations.join('、')} · ${dept} · ${statusLabel}\n`
     })
     text += `\n`
 
@@ -127,6 +189,31 @@ export default function ClueCenter() {
     }
   }
 
+  const drillToClue = (clueId: string) => {
+    navigate(`/clue/${clueId}`)
+  }
+
+  const drillToCategory = (category: Category) => {
+    const params = new URLSearchParams(searchParams)
+    params.set('category', category)
+    setSearchParams(params)
+    setFilterCategory(category)
+    setViewMode('list')
+  }
+
+  const drillToStreet = (street: string) => {
+    const params = new URLSearchParams(searchParams)
+    params.set('street', street)
+    setSearchParams(params)
+    setFilterStreet(street)
+    setViewMode('list')
+  }
+
+  const drillToDept = (dept: string) => {
+    setFilterDept(dept === filterDept ? '' : dept)
+    setViewMode('list')
+  }
+
   return (
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between">
@@ -139,7 +226,9 @@ export default function ClueCenter() {
               线索中心
             </h2>
             <p className="text-xs text-gray-400">
-              {viewMode === 'list' ? '相似诉求已自动合并，点击查看详情' : '晨会汇报材料自动汇总，一键复制'}
+              {viewMode === 'list'
+                ? `相似诉求已自动合并 · ${selectedStreets.length > 0 ? `${selectedStreets.length}个街道` : '全部街道'} · ${timeRange === '7d' ? '近7天' : '近30天'}`
+                : '晨会汇报材料自动汇总，点击卡片可下钻查看'}
             </p>
           </div>
         </div>
@@ -168,7 +257,7 @@ export default function ClueCenter() {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-1 bg-gray-50 rounded-lg p-1">
           <button
-            onClick={() => setFilterCategory('')}
+            onClick={() => { setFilterCategory(''); const p = new URLSearchParams(searchParams); p.delete('category'); setSearchParams(p) }}
             className={`px-3 py-1.5 rounded-md text-sm transition-all ${
               filterCategory === '' ? 'bg-white text-blue-600 shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
             }`}
@@ -178,7 +267,12 @@ export default function ClueCenter() {
           {CATEGORIES.map((cat) => (
             <button
               key={cat}
-              onClick={() => setFilterCategory(filterCategory === cat ? '' : cat)}
+              onClick={() => {
+                setFilterCategory(filterCategory === cat ? '' : cat)
+                const p = new URLSearchParams(searchParams)
+                if (filterCategory === cat) p.delete('category'); else p.set('category', cat)
+                setSearchParams(p)
+              }}
               className={`px-3 py-1.5 rounded-md text-sm transition-all ${
                 filterCategory === cat ? 'bg-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
               }`}
@@ -190,7 +284,12 @@ export default function ClueCenter() {
         </div>
         <select
           value={filterStreet}
-          onChange={(e) => setFilterStreet(e.target.value)}
+          onChange={(e) => {
+            setFilterStreet(e.target.value)
+            const p = new URLSearchParams(searchParams)
+            if (e.target.value) p.set('street', e.target.value); else p.delete('street')
+            setSearchParams(p)
+          }}
           className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
         >
           <option value="">全部街道</option>
@@ -198,6 +297,26 @@ export default function ClueCenter() {
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
+        <select
+          value={filterDept}
+          onChange={(e) => setFilterDept(e.target.value)}
+          className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+        >
+          <option value="">全部部门</option>
+          {Array.from(new Set(computedAssignments.map(a => a.department))).map((d) => (
+            <option key={d} value={d}>{d}</option>
+          ))}
+        </select>
+        {(selectedStreets.length > 0 || selectedCategories.length > 0 || timeRange !== '7d') && (
+          <div className="flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-50 text-blue-600">
+            <Filter className="w-3 h-3" />
+            <span>
+              {selectedStreets.length > 0 && `${selectedStreets.length}街道 `}
+              {selectedCategories.length > 0 && `${selectedCategories.length}类型 `}
+              {timeRange !== '7d' && `${timeRange === '30d' ? '近30天' : '自定义'}`}
+            </span>
+          </div>
+        )}
         <span className="text-sm text-gray-400 ml-auto">
           共 {filtered.length} 组线索
         </span>
@@ -213,7 +332,18 @@ export default function ClueCenter() {
             transition={{ duration: 0.2 }}
             className="space-y-3"
           >
-            {filtered.map((cg, i) => (
+            {filtered.map((cg, i) => {
+              const status = getClueComputedStatus(cg)
+              const statusColor = status === 'unassigned' ? 'gray' :
+                status === 'done' ? 'green' :
+                status === 'overdue' ? 'red' :
+                status === 'urgent' ? 'orange' : 'blue'
+              const statusLabel = status === 'unassigned' ? '待派单' :
+                status === 'done' ? '已反馈' :
+                status === 'overdue' ? '超期' :
+                status === 'urgent' ? '临期' : '正常'
+
+              return (
               <motion.div
                 key={cg.id}
                 initial={{ opacity: 0, y: 10 }}
@@ -240,12 +370,13 @@ export default function ClueCenter() {
                       </span>
                       {cg.isAssigned && (
                         <span className={`text-xs px-1.5 py-0.5 rounded ${
-                          cg.assignment?.status === 'done' ? 'bg-green-50 text-green-600' :
-                          cg.assignment?.status === 'overdue' ? 'bg-red-50 text-red-600' :
-                          'bg-orange-50 text-orange-600'
+                          statusColor === 'gray' ? 'bg-gray-50 text-gray-600' :
+                          statusColor === 'green' ? 'bg-green-50 text-green-600' :
+                          statusColor === 'red' ? 'bg-red-50 text-red-600' :
+                          statusColor === 'orange' ? 'bg-orange-50 text-orange-600' :
+                          'bg-blue-50 text-blue-600'
                         }`}>
-                          {cg.assignment?.status === 'done' ? '已反馈' :
-                           cg.assignment?.status === 'overdue' ? '超期' : '跟办中'}
+                          {statusLabel}
                         </span>
                       )}
                     </div>
@@ -262,6 +393,12 @@ export default function ClueCenter() {
                         <MapPin className="w-3 h-3" />
                         {cg.locations.join('、')}
                       </span>
+                      {cg.assignment && (
+                        <span className="flex items-center gap-1">
+                          <Building2 className="w-3 h-3" />
+                          {cg.assignment.department}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -321,7 +458,7 @@ export default function ClueCenter() {
                   )}
                 </AnimatePresence>
               </motion.div>
-            ))}
+            )})}
           </motion.div>
         ) : (
           <motion.div
@@ -359,11 +496,17 @@ export default function ClueCenter() {
               <h4 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2" style={{ fontFamily: "'Noto Serif SC', serif" }}>
                 <AlertTriangle className="w-4 h-4 text-red-500" />
                 突增预警（环比增长&gt;50%）
+                <span className="text-xs text-gray-400 font-normal ml-2">点击卡片查看该地点线索</span>
               </h4>
               {alertItems.length > 0 ? (
                 <div className="grid grid-cols-2 gap-3">
                   {alertItems.map((alert, i) => (
-                    <div key={alert.id} className="p-3 rounded-lg border border-red-100 bg-red-50/30">
+                    <motion.div
+                      key={alert.id}
+                      whileHover={{ scale: 1.01, y: -2 }}
+                      onClick={() => drillToStreet(alert.street)}
+                      className="p-3 rounded-lg border border-red-100 bg-red-50/30 cursor-pointer hover:shadow-md transition-all"
+                    >
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-sm font-medium text-gray-800">{alert.location}</span>
                         <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: `${CATEGORY_COLORS[alert.category]}15`, color: CATEGORY_COLORS[alert.category] }}>
@@ -377,7 +520,7 @@ export default function ClueCenter() {
                           +{alert.increase}%
                         </span>
                       </div>
-                    </div>
+                    </motion.div>
                   ))}
                 </div>
               ) : (
@@ -389,17 +532,26 @@ export default function ClueCenter() {
               <h4 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2" style={{ fontFamily: "'Noto Serif SC', serif" }}>
                 <Users className="w-4 h-4 text-blue-500" />
                 高频线索 TOP 5
+                <span className="text-xs text-gray-400 font-normal ml-2">点击线索查看详情，点击分类筛选</span>
               </h4>
               <div className="space-y-2">
                 {briefingData.highFreqClues.map((cg, i) => {
-                  const status = !cg.isAssigned ? '待派单' :
-                    cg.assignment?.status === 'done' ? '已反馈' :
-                    cg.assignment?.status === 'overdue' ? '超期' : '跟办中'
-                  const statusColor = !cg.isAssigned ? 'gray' :
-                    cg.assignment?.status === 'done' ? 'green' :
-                    cg.assignment?.status === 'overdue' ? 'red' : 'orange'
+                  const status = getClueComputedStatus(cg)
+                  const statusColor = status === 'unassigned' ? 'gray' :
+                    status === 'done' ? 'green' :
+                    status === 'overdue' ? 'red' :
+                    status === 'urgent' ? 'orange' : 'blue'
+                  const statusLabel = status === 'unassigned' ? '待派单' :
+                    status === 'done' ? '已反馈' :
+                    status === 'overdue' ? '超期' :
+                    status === 'urgent' ? '临期' : '正常'
                   return (
-                    <div key={cg.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+                    <motion.div
+                      key={cg.id}
+                      whileHover={{ y: -1 }}
+                      className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors border border-transparent hover:border-gray-100 cursor-pointer"
+                      onClick={() => drillToClue(cg.id)}
+                    >
                       <div
                         className="w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold text-white shrink-0"
                         style={{ background: CATEGORY_COLORS[cg.category] }}
@@ -407,11 +559,28 @@ export default function ClueCenter() {
                         {i + 1}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm text-gray-800 font-medium truncate">{cg.summary}</div>
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <div className="text-sm text-gray-800 font-medium truncate flex-1">{cg.summary}</div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); drillToCategory(cg.category) }}
+                            className="text-xs px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity"
+                            style={{ background: `${CATEGORY_COLORS[cg.category]}15`, color: CATEGORY_COLORS[cg.category] }}
+                          >
+                            {cg.category}
+                          </button>
+                        </div>
                         <div className="flex items-center gap-2 text-xs text-gray-400 mt-0.5">
                           <span>{cg.appeals.length} 条留言</span>
                           <span>·</span>
-                          <span>{cg.locations.join('、')}</span>
+                          {cg.locations.map((loc, idx) => (
+                            <span
+                              key={loc}
+                              onClick={(e) => { e.stopPropagation(); drillToStreet(cg.appeals.find(a => a.location === loc)?.street || '') }}
+                              className="hover:text-blue-500 transition-colors"
+                            >
+                              {loc}{idx < cg.locations.length - 1 ? '、' : ''}
+                            </span>
+                          ))}
                           <span>·</span>
                           <span>{cg.assignment?.department || '待指派'}</span>
                         </div>
@@ -420,11 +589,12 @@ export default function ClueCenter() {
                         statusColor === 'gray' ? 'bg-gray-100 text-gray-600' :
                         statusColor === 'green' ? 'bg-green-100 text-green-600' :
                         statusColor === 'red' ? 'bg-red-100 text-red-600' :
-                        'bg-orange-100 text-orange-600'
+                        statusColor === 'orange' ? 'bg-orange-100 text-orange-600' :
+                        'bg-blue-100 text-blue-600'
                       }`}>
-                        {status}
+                        {statusLabel}
                       </span>
-                    </div>
+                    </motion.div>
                   )
                 })}
               </div>
@@ -435,15 +605,41 @@ export default function ClueCenter() {
                 <h4 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2" style={{ fontFamily: "'Noto Serif SC', serif" }}>
                   <Building2 className="w-4 h-4 text-blue-500" />
                   责任部门督办
+                  <span className="text-xs text-gray-400 font-normal ml-2">点击部门筛选</span>
                 </h4>
                 <div className="space-y-2">
                   {briefingData.departments.slice(0, 6).map(([dept, stats]) => (
-                    <div key={dept} className="flex items-center justify-between text-sm">
+                    <div
+                      key={dept}
+                      onClick={() => drillToDept(dept)}
+                      className={`flex items-center justify-between text-sm p-2 rounded-md cursor-pointer transition-colors ${
+                        filterDept === dept ? 'bg-blue-50' : 'hover:bg-gray-50'
+                      }`}
+                    >
                       <span className="text-gray-600">{dept}</span>
                       <div className="flex items-center gap-2">
-                        {stats.overdue > 0 && <span className="text-red-500 font-medium">超期{stats.overdue}</span>}
-                        {stats.urgent > 0 && <span className="text-orange-500 font-medium">临期{stats.urgent}</span>}
-                        <span className="text-green-600 font-medium">已办{stats.done}</span>
+                        {stats.overdue > 0 && (
+                          <span className="flex items-center gap-0.5 text-red-500 font-medium">
+                            <AlertCircle className="w-3 h-3" />
+                            {stats.overdue}
+                          </span>
+                        )}
+                        {stats.urgent > 0 && (
+                          <span className="flex items-center gap-0.5 text-orange-500 font-medium">
+                            <Clock className="w-3 h-3" />
+                            {stats.urgent}
+                          </span>
+                        )}
+                        {stats.normal > 0 && (
+                          <span className="flex items-center gap-0.5 text-blue-500 font-medium">
+                            <User className="w-3 h-3" />
+                            {stats.normal}
+                          </span>
+                        )}
+                        <span className="flex items-center gap-0.5 text-green-600 font-medium">
+                          <CheckCircle className="w-3 h-3" />
+                          {stats.done}
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -454,12 +650,25 @@ export default function ClueCenter() {
                 <h4 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2" style={{ fontFamily: "'Noto Serif SC', serif" }}>
                   <FileText className="w-4 h-4 text-blue-500" />
                   分类统计
+                  <span className="text-xs text-gray-400 font-normal ml-2">点击分类筛选</span>
                 </h4>
                 <div className="space-y-3">
                   {categoryStats.map((stat) => (
-                    <div key={stat.category}>
+                    <div
+                      key={stat.category}
+                      onClick={() => drillToCategory(stat.category)}
+                      className={`cursor-pointer p-2 rounded-md transition-colors ${
+                        filterCategory === stat.category ? 'bg-blue-50' : 'hover:bg-gray-50'
+                      }`}
+                    >
                       <div className="flex items-center justify-between text-sm mb-1">
-                        <span className="text-gray-600">{stat.category}</span>
+                        <span className="text-gray-600 flex items-center gap-1">
+                          <div
+                            className="w-2 h-2 rounded-full"
+                            style={{ background: CATEGORY_COLORS[stat.category] }}
+                          />
+                          {stat.category}
+                        </span>
                         <div className="flex items-center gap-2">
                           <span className="font-semibold text-gray-800">{stat.count} 件</span>
                           <span className={`text-xs ${stat.change >= 0 ? 'text-red-500' : 'text-green-500'}`}>
@@ -485,7 +694,7 @@ export default function ClueCenter() {
             <div className="bg-gray-50 rounded-xl border border-gray-100 p-5">
               <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2" style={{ fontFamily: "'Noto Serif SC', serif" }}>
                 <FileText className="w-4 h-4 text-gray-500" />
-                汇报文本预览
+                汇报文本预览（仅当前筛选范围）
               </h4>
               <pre className="text-xs text-gray-600 whitespace-pre-wrap font-sans leading-relaxed bg-white rounded-lg p-4 border border-gray-200 max-h-96 overflow-y-auto">
                 {generateBriefingText()}
