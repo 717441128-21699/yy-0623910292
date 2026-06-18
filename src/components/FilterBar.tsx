@@ -66,7 +66,9 @@ function MultiSelect({ options, selected, onChange, placeholder }: {
 }
 
 export default function FilterBar() {
-  const { selectedStreets, selectedCategories, timeRange, setSelectedStreets, setSelectedCategories, setTimeRange } = useStore()
+  const { selectedStreets, selectedCategories, timeRange, setSelectedStreets, setSelectedCategories, setTimeRange, applyFilters, resetFilters, filterApplied } = useStore()
+
+  const hasSelection = selectedStreets.length > 0 || selectedCategories.length > 0
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 flex-wrap">
@@ -97,7 +99,17 @@ export default function FilterBar() {
           </button>
         ))}
       </div>
-      <button className="ml-auto flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:shadow-lg active:scale-[0.98]"
+      {hasSelection && (
+        <button
+          onClick={resetFilters}
+          className="text-xs px-3 py-2 text-gray-400 hover:text-gray-600 transition-colors"
+        >
+          重置
+        </button>
+      )}
+      <button
+        onClick={applyFilters}
+        className={`ml-auto flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:shadow-lg active:scale-[0.98] ${!filterApplied ? 'ring-2 ring-blue-300' : ''}`}
         style={{ background: '#2E7CF6' }}
       >
         <Search className="w-4 h-4" />

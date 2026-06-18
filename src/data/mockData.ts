@@ -1,13 +1,13 @@
-import { format, subDays } from 'date-fns'
+import { format, subDays, parseISO, isAfter, isBefore, differenceInDays } from 'date-fns'
 import type { Appeal, ClueGroup, Assignment, AlertItem, TrendPoint, Category } from '@/types'
 
-const today = new Date()
+export const baseToday = new Date()
 
-function d(daysAgo: number): string {
-  return format(subDays(today, daysAgo), 'yyyy-MM-dd')
+export function d(daysAgo: number): string {
+  return format(subDays(baseToday, daysAgo), 'yyyy-MM-dd')
 }
 
-const appeals: Appeal[] = [
+export const appeals: Appeal[] = [
   { id: 'a1', source: 'hotline', category: '供水供电', content: '长安街道阳光花园小区已经停水三天了，居民用水极其困难，多次拨打自来水公司电话无人处理', location: '阳光花园小区', street: '长安街道', community: '阳光花园', createdAt: d(1), clueGroupId: 'cg1' },
   { id: 'a2', source: 'governance', category: '供水供电', content: '阳光花园小区停水问题严重，已经影响居民正常生活，希望有关部门尽快处理', location: '阳光花园小区', street: '长安街道', community: '阳光花园', createdAt: d(2), clueGroupId: 'cg1' },
   { id: 'a3', source: 'forum', category: '供水供电', content: '有没有阳光花园的邻居？我们这边又停水了，这都第几回了？', location: '阳光花园小区', street: '长安街道', community: '阳光花园', createdAt: d(2), clueGroupId: 'cg1' },
@@ -70,7 +70,7 @@ const appeals: Appeal[] = [
   { id: 'a60', source: 'governance', category: '其他', content: '永安街道广场舞噪音问题需规范管理', location: '永安街道广场', street: '永安街道', createdAt: d(2), clueGroupId: 'cg23' },
 ]
 
-const clueGroups: ClueGroup[] = [
+export const baseClueGroups: ClueGroup[] = [
   { id: 'cg1', category: '供水供电', appeals: appeals.filter(a => a.clueGroupId === 'cg1'), summary: '阳光花园小区停水三天，居民用水困难', firstSeenAt: d(2), locations: ['阳光花园小区'], isAssigned: true, assignment: { id: 'as1', clueGroupId: 'cg1', department: '水务局', deadline: d(-1), note: '已通知水务局紧急处理，需协调供水管网维修', status: 'overdue', createdAt: d(1) } },
   { id: 'cg2', category: '供水供电', appeals: appeals.filter(a => a.clueGroupId === 'cg2'), summary: '翠湖苑频繁停电，供电线路老化', firstSeenAt: d(1), locations: ['翠湖苑小区'], isAssigned: true, assignment: { id: 'as2', clueGroupId: 'cg2', department: '供电公司', deadline: d(1), note: '需更换变压器及部分线路', status: 'urgent', createdAt: d(0) } },
   { id: 'cg3', category: '供水供电', appeals: appeals.filter(a => a.clueGroupId === 'cg3'), summary: '金桥家园高层水压不足', firstSeenAt: d(4), locations: ['金桥家园'], isAssigned: true, assignment: { id: 'as3', clueGroupId: 'cg3', department: '水务局', deadline: d(-3), note: '二次供水设备需维修', status: 'overdue', createdAt: d(3) } },
@@ -96,86 +96,187 @@ const clueGroups: ClueGroup[] = [
   { id: 'cg23', category: '其他', appeals: appeals.filter(a => a.clueGroupId === 'cg23'), summary: '永安街道广场舞噪音扰民', firstSeenAt: d(2), locations: ['永安街道广场'], isAssigned: false },
 ]
 
-const alertItems: AlertItem[] = [
-  { id: 'al1', location: '阳光花园小区', street: '长安街道', category: '供水供电', increase: 180, currentCount: 3 },
-  { id: 'al2', location: '翠湖苑小区', street: '永安街道', category: '供水供电', increase: 120, currentCount: 3 },
-  { id: 'al3', location: '锦绣园小区', street: '长安街道', category: '物业纠纷', increase: 200, currentCount: 3 },
-  { id: 'al4', location: '人民路', street: '朝阳街道', category: '道路出行', increase: 150, currentCount: 3 },
-  { id: 'al5', location: '永安中学', street: '永安街道', category: '教育医疗', increase: 90, currentCount: 3 },
-  { id: 'al6', location: '新华街道', street: '新华街道', category: '其他', increase: 75, currentCount: 3 },
-]
+export function computeAssignmentStatus(deadline: string, isDone: boolean, feedbackAt?: string): 'overdue' | 'urgent' | 'done' {
+  if (isDone || feedbackAt) return 'done'
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const deadlineDate = parseISO(deadline)
+  deadlineDate.setHours(0, 0, 0, 0)
+  const diff = differenceInDays(deadlineDate, today)
+  if (diff < 0) return 'overdue'
+  if (diff <= 3) return 'urgent'
+  return 'urgent'
+}
 
-function generateTrendData(): TrendPoint[] {
+export function getFilteredAppeals(
+  allAppeals: Appeal[],
+  selectedStreets: string[],
+  selectedCategories: string[],
+  timeRange: '7d' | '30d' | 'custom'
+): Appeal[] {
+  const today = new Date()
+  today.setHours(23, 59, 59, 999)
+  const daysBack = timeRange === '7d' ? 7 : 30
+  const startDate = subDays(today, daysBack)
+  startDate.setHours(0, 0, 0, 0)
+
+  return allAppeals.filter((a) => {
+    if (selectedStreets.length > 0 && !selectedStreets.includes(a.street)) return false
+    if (selectedCategories.length > 0 && !selectedCategories.includes(a.category)) return false
+    const createdAt = parseISO(a.createdAt)
+    if (isBefore(createdAt, startDate) || isAfter(createdAt, today)) return false
+    return true
+  })
+}
+
+export function getFilteredCategoryStats(
+  filteredAppeals: Appeal[],
+  allAppeals: Appeal[],
+  selectedStreets: string[],
+  selectedCategories: string[],
+  timeRange: '7d' | '30d' | 'custom'
+): { category: Category; count: number; change: number }[] {
   const categories: Category[] = ['供水供电', '道路出行', '物业纠纷', '教育医疗', '其他']
-  const baselines: Record<Category, number> = {
-    '供水供电': 8,
-    '道路出行': 6,
-    '物业纠纷': 5,
-    '教育医疗': 4,
-    '其他': 3,
+  const today = new Date()
+  today.setHours(23, 59, 59, 999)
+  const daysBack = timeRange === '7d' ? 7 : 30
+  const currentStart = subDays(today, daysBack)
+  const prevEnd = subDays(currentStart, 1)
+  const prevStart = subDays(prevEnd, daysBack)
+  currentStart.setHours(0, 0, 0, 0)
+  prevEnd.setHours(23, 59, 59, 999)
+  prevStart.setHours(0, 0, 0, 0)
+
+  return categories.map((cat) => {
+    const currentCount = filteredAppeals.filter((a) => a.category === cat).length
+    const prevCount = allAppeals.filter((a) => {
+      if (selectedStreets.length > 0 && !selectedStreets.includes(a.street)) return false
+      if (selectedCategories.length > 0 && !selectedCategories.includes(a.category)) return false
+      if (a.category !== cat) return false
+      const createdAt = parseISO(a.createdAt)
+      return !isBefore(createdAt, prevStart) && !isAfter(createdAt, prevEnd)
+    }).length
+    const change = prevCount === 0 ? 100 : Math.round(((currentCount - prevCount) / prevCount) * 100)
+    return { category: cat, count: currentCount, change }
+  })
+}
+
+export function getFilteredAlertItems(
+  filteredAppeals: Appeal[],
+  allAppeals: Appeal[],
+  selectedStreets: string[],
+  selectedCategories: string[],
+  timeRange: '7d' | '30d' | 'custom'
+): AlertItem[] {
+  const today = new Date()
+  today.setHours(23, 59, 59, 999)
+  const daysBack = timeRange === '7d' ? 7 : 30
+  const currentStart = subDays(today, daysBack)
+  const prevEnd = subDays(currentStart, 1)
+  const prevStart = subDays(prevEnd, daysBack)
+  currentStart.setHours(0, 0, 0, 0)
+  prevEnd.setHours(23, 59, 59, 999)
+  prevStart.setHours(0, 0, 0, 0)
+
+  const locGroup = new Map<string, { appeals: Appeal[]; current: number; prev: number }>()
+
+  for (const a of filteredAppeals) {
+    const key = a.location
+    if (!locGroup.has(key)) {
+      locGroup.set(key, { appeals: [], current: 0, prev: 0 })
+    }
+    locGroup.get(key)!.appeals.push(a)
+    locGroup.get(key)!.current += 1
   }
+
+  for (const a of allAppeals) {
+    if (selectedStreets.length > 0 && !selectedStreets.includes(a.street)) continue
+    if (selectedCategories.length > 0 && !selectedCategories.includes(a.category)) continue
+    const key = a.location
+    if (!locGroup.has(key)) continue
+    const createdAt = parseISO(a.createdAt)
+    if (!isBefore(createdAt, prevStart) && !isAfter(createdAt, prevEnd)) {
+      locGroup.get(key)!.prev += 1
+    }
+  }
+
+  const alerts: AlertItem[] = []
+  let id = 0
+  for (const [location, data] of locGroup.entries()) {
+    const { current, prev, appeals } = data
+    const increase = prev === 0 ? 100 : Math.round(((current - prev) / prev) * 100)
+    if (increase >= 50 && current >= 2 && appeals.length > 0) {
+      alerts.push({
+        id: `al_${id++}`,
+        location,
+        street: appeals[0].street,
+        category: appeals[0].category,
+        increase,
+        currentCount: current,
+      })
+    }
+  }
+
+  return alerts.sort((a, b) => b.increase - a.increase)
+}
+
+export function getFilteredTrendData(
+  allAppeals: Appeal[],
+  selectedStreets: string[],
+  selectedCategories: string[],
+  timeRange: '7d' | '30d' | 'custom'
+): TrendPoint[] {
+  const categories: Category[] = ['供水供电', '道路出行', '物业纠纷', '教育医疗', '其他']
+  const days = timeRange === '7d' ? 7 : 30
   const data: TrendPoint[] = []
-  for (let i = 29; i >= 0; i--) {
-    const point: TrendPoint = { date: d(i) } as TrendPoint
+
+  for (let i = days - 1; i >= 0; i--) {
+    const dateStr = format(subDays(new Date(), i), 'yyyy-MM-dd')
+    const point: TrendPoint = { date: dateStr } as TrendPoint
     for (const cat of categories) {
-      const base = baselines[cat]
-      const spike = i < 7 ? Math.floor(Math.random() * 4) + 2 : 0
-      const noise = Math.floor(Math.random() * 3) - 1
-      point[cat] = Math.max(0, base + noise + spike)
+      point[cat] = allAppeals.filter((a) => {
+        if (selectedStreets.length > 0 && !selectedStreets.includes(a.street)) return false
+        if (selectedCategories.length > 0 && !selectedCategories.includes(a.category)) return false
+        if (a.category !== cat) return false
+        return a.createdAt === dateStr
+      }).length
     }
     data.push(point)
   }
   return data
 }
 
-const trendData = generateTrendData()
-
-const assignments: Assignment[] = clueGroups
-  .filter(cg => cg.assignment)
-  .map(cg => cg.assignment!)
-
-export function getAppeals(): Appeal[] {
-  return appeals
-}
-
-export function getClueGroups(): ClueGroup[] {
-  return clueGroups
-}
-
-export function getAlertItems(): AlertItem[] {
-  return alertItems
-}
-
-export function getTrendData(): TrendPoint[] {
-  return trendData
-}
-
-export function getAssignments(): Assignment[] {
-  return assignments
-}
-
-export function getCategoryStats(): { category: Category; count: number; change: number }[] {
-  const recent7 = appeals.filter(a => {
-    const date = new Date(a.createdAt)
-    return date >= subDays(today, 7)
-  })
-  const prev7 = appeals.filter(a => {
-    const date = new Date(a.createdAt)
-    return date >= subDays(today, 14) && date < subDays(today, 7)
-  })
-  const categories: Category[] = ['供水供电', '道路出行', '物业纠纷', '教育医疗', '其他']
-  return categories.map(cat => {
-    const recentCount = recent7.filter(a => a.category === cat).length
-    const prevCount = prev7.filter(a => a.category === cat).length
-    const change = prevCount === 0 ? 100 : Math.round(((recentCount - prevCount) / prevCount) * 100)
-    return { category: cat, count: recentCount, change }
-  })
-}
-
-export function getStreetHeatData(): { street: string; count: number }[] {
+export function getFilteredStreetHeat(
+  filteredAppeals: Appeal[],
+  allStreets: string[]
+): { street: string; count: number }[] {
   const counts: Record<string, number> = {}
-  for (const a of appeals) {
+  for (const s of allStreets) counts[s] = 0
+  for (const a of filteredAppeals) {
     counts[a.street] = (counts[a.street] || 0) + 1
   }
   return Object.entries(counts).map(([street, count]) => ({ street, count }))
+}
+
+export function getFilteredClueGroups(
+  clueGroups: ClueGroup[],
+  selectedStreets: string[],
+  selectedCategories: string[]
+): ClueGroup[] {
+  return clueGroups.filter((cg) => {
+    if (selectedCategories.length > 0 && !selectedCategories.includes(cg.category)) return false
+    if (selectedStreets.length > 0) {
+      const hasMatchingStreet = cg.appeals.some((a) => selectedStreets.includes(a.street))
+      if (!hasMatchingStreet) return false
+    }
+    return true
+  })
+}
+
+export function getBaseClueGroups(): ClueGroup[] {
+  return baseClueGroups
+}
+
+export function getBaseAssignments(): Assignment[] {
+  return baseClueGroups.filter((cg) => cg.assignment).map((cg) => cg.assignment!)
 }

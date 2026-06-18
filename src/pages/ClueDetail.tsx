@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useStore } from '@/store'
 import { CATEGORY_COLORS, SOURCE_LABELS, DEPARTMENTS, type Source } from '@/types'
 import { ArrowLeft, Phone, MessageSquare, Globe, MapPin, Clock, Users, CheckCircle, AlertCircle, Timer, Save } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { computeAssignmentStatus } from '@/data/mockData'
 
 const sourceIcons: Record<Source, React.ElementType> = {
   hotline: Phone,
@@ -38,6 +39,16 @@ export default function ClueDetail() {
   }
 
   const color = CATEGORY_COLORS[clue.category]
+
+  const computedAssignment = useMemo(() => {
+    if (clue.isAssigned && clue.assignment) {
+      const a = clue.assignment
+      const isDone = a.status === 'done' || !!a.feedbackAt
+      const computedStatus = computeAssignmentStatus(a.deadline, isDone, a.feedbackAt)
+      return { ...a, computedStatus }
+    }
+    return null
+  }, [clue.isAssigned, clue.assignment])
 
   const toggleAppeal = (appealId: string) => {
     setExpandedAppeals((prev) => {
@@ -179,7 +190,7 @@ export default function ClueDetail() {
         </div>
 
         <div className="space-y-4">
-          {clue.isAssigned && clue.assignment ? (
+          {computedAssignment ? (
             <div className="bg-white rounded-xl border border-gray-100 p-5">
               <h4 className="text-sm font-semibold text-gray-700 mb-4" style={{ fontFamily: "'Noto Serif SC', serif" }}>
                 跟办信息
@@ -187,34 +198,34 @@ export default function ClueDetail() {
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <CheckCircle className={`w-4 h-4 ${
-                    clue.assignment.status === 'done' ? 'text-green-500' :
-                    clue.assignment.status === 'overdue' ? 'text-red-500' : 'text-orange-500'
+                    computedAssignment.computedStatus === 'done' ? 'text-green-500' :
+                    computedAssignment.computedStatus === 'overdue' ? 'text-red-500' : 'text-orange-500'
                   }`} />
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                    clue.assignment.status === 'done' ? 'bg-green-50 text-green-600' :
-                    clue.assignment.status === 'overdue' ? 'bg-red-50 text-red-600' :
+                    computedAssignment.computedStatus === 'done' ? 'bg-green-50 text-green-600' :
+                    computedAssignment.computedStatus === 'overdue' ? 'bg-red-50 text-red-600' :
                     'bg-orange-50 text-orange-600'
                   }`}>
-                    {clue.assignment.status === 'done' ? '已反馈' :
-                     clue.assignment.status === 'overdue' ? '超期' : '跟办中'}
+                    {computedAssignment.computedStatus === 'done' ? '已反馈' :
+                     computedAssignment.computedStatus === 'overdue' ? '超期' : '跟办中'}
                   </span>
                 </div>
                 <div className="text-sm">
                   <span className="text-gray-400">责任部门：</span>
-                  <span className="text-gray-700 font-medium">{clue.assignment.department}</span>
+                  <span className="text-gray-700 font-medium">{computedAssignment.department}</span>
                 </div>
                 <div className="text-sm">
                   <span className="text-gray-400">办理期限：</span>
-                  <span className="text-gray-700 font-medium">{clue.assignment.deadline}</span>
+                  <span className="text-gray-700 font-medium">{computedAssignment.deadline}</span>
                 </div>
                 <div className="text-sm">
                   <span className="text-gray-400">备注：</span>
-                  <span className="text-gray-700">{clue.assignment.note}</span>
+                  <span className="text-gray-700">{computedAssignment.note}</span>
                 </div>
-                {clue.assignment.feedbackAt && (
+                {computedAssignment.feedbackAt && (
                   <div className="text-sm">
                     <span className="text-gray-400">反馈时间：</span>
-                    <span className="text-green-600 font-medium">{clue.assignment.feedbackAt}</span>
+                    <span className="text-green-600 font-medium">{computedAssignment.feedbackAt}</span>
                   </div>
                 )}
               </div>

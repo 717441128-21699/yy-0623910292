@@ -1,6 +1,8 @@
 import { LayoutDashboard, FileSearch, ClipboardList, Shield } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useStore } from '@/store'
+import { useEffect, useState } from 'react'
+import { computeAssignmentStatus } from '@/data/mockData'
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: '诉求看板' },
@@ -10,8 +12,21 @@ const navItems = [
 
 export default function Sidebar() {
   const assignments = useStore((s) => s.assignments)
-  const overdueCount = assignments.filter((a) => a.status === 'overdue').length
-  const urgentCount = assignments.filter((a) => a.status === 'urgent').length
+  const [now, setNow] = useState(new Date())
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(new Date())
+    }, 60000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const computed = assignments.map((a) => {
+    const isDone = a.status === 'done' || !!a.feedbackAt
+    return { ...a, computedStatus: computeAssignmentStatus(a.deadline, isDone, a.feedbackAt) }
+  })
+  const overdueCount = computed.filter((a) => a.computedStatus === 'overdue').length
+  const urgentCount = computed.filter((a) => a.computedStatus === 'urgent').length
   const todoBadge = overdueCount + urgentCount
 
   return (
