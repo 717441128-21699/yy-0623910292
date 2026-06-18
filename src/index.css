@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=Noto+Serif+SC:wght@400;600;700&display=swap');
+
+:root {
+  font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --navy-900: #0F1B2D;
+  --navy-800: #1B2A4A;
+  --navy-700: #243656;
+  --navy-600: #2D4268;
+  --blue-500: #2E7CF6;
+  --blue-400: #5A9BF7;
+  --blue-300: #8DBCF9;
+  --red-500: #E74C3C;
+  --orange-500: #F39C12;
+  --green-500: #27AE60;
+}
+
+body {
+  margin: 0;
+  background: #F0F2F5;
+  color: #1F2937;
+}
+
+h1, h2, h3 {
+  font-family: 'Noto Serif SC', serif;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
